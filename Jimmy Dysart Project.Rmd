@@ -1,0 +1,426 @@
+---
+title: "Red Sox Personal Project"
+author: "Jimmy Dysart"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,include = FALSE,warning = FALSE}
+
+library(glmnet)
+library(corrplot)
+library(tidymodels)
+library(ISLR)
+library(ISLR2)
+library(vip)
+library(tidyverse)
+library(glmnet)
+library(modeldata)
+library(ggthemes)
+library(ggplot2)
+library(janitor) # for naming conventions
+library(naniar) # to assess missing data patterns
+library(corrplot) # for a correlation plot
+library(caret)
+library(dplyr)
+```
+
+## Purpose
+I am making this project to express my passion about working for the Boston Red Sox. All my life, I've wanted to live in Boston as a grownup. I am extremely passionate about sports and some of my favorite experiences in life are at ballparks with my friends and siblings. I admire Boston's sports culture. I want to use this project to show why I am an excellent fit for the Boston Red Sox Baseball Analytics Internship.
+
+## Introduction
+
+Regular Season Baseball is all about finding a way to get into the playoffs. In the playoffs, anything can happen. In baseball, the ONLY sure-fire way to get into the playoffs is to win your division. That means in an ultra-competitive division like the AL East, all a team needs to do to get into the playoffs is be the `#1 seed`. Since the 1998 season, there has been 5 teams in the AL East:
+  
+  - Boston Red Sox
+  
+  - New York Yankees
+  
+  - Toronto Blue Jays
+  
+  - Baltimore Orioles
+  
+  - Tampa Bay Rays (was "Devil Rays" until [2008](https://en.wikipedia.org/wiki/American_League_East))
+
+
+## My Question
+
+I am curious what it takes to be a `#1 seed` in baseball's hardest division to play in. I want to compare a bunch of different `Pitching` statistical metrics with the regular season final rankings in the AL East. I will be using `year-by-year team pitching data` from the 1998 season to the 2022 season from each team in the AL East. I want to find the best predicting variables for winning the division.
+
+## Gathering Data
+
+To gather the data I am using year-by-year team pitching data from the (team names are hyperlinked with data source):
+
+  - [Boston Red Sox](https://www.baseball-reference.com/teams/BOS/pitchteam.shtml)
+  
+  - [New York Yankees](https://www.baseball-reference.com/teams/NYY/pitchteam.shtml)
+  
+  - [Toronto Blue Jays](https://www.baseball-reference.com/teams/TOR/pitchteam.shtml)
+  
+  - [Baltimore Orioles](https://www.baseball-reference.com/teams/BAL/pitchteam.shtml)
+  
+  - [Tampa Bay Rays](https://www.baseball-reference.com/teams/TBD/pitchteam.shtml)
+
+I now need to import the data so I perform data analysis on it.
+
+Baseball Reference has a pretty neat feature where I could make the data into excel format then copy/paste into excel and export from excel as a csv file.
+
+Boston Data:
+
+```{r}
+library(readr) 
+# Red Sox Raw Data
+RedSox_raw <- read_csv("RedSox_raw.csv")
+
+RedSox_raw<- RedSox_raw %>% filter(Year >= 1998)
+
+RedSox_raw <- RedSox_raw %>% mutate(Team = "BOS") # Adding team abbreviation for when I merge all the data frames
+```
+
+New York Data:
+
+```{r}
+# Yankees Raw Data
+Yankees_raw <- read_csv("Yankees_raw.csv")
+
+Yankees_raw<- Yankees_raw %>% filter(Year >= 1998)
+
+Yankees_raw <- Yankees_raw %>% mutate(Team = "NYY")
+
+```
+
+Toronto Data:
+
+```{r}
+# Blue Jays Raw Data
+BlueJays_raw <- read_csv("BlueJays_raw.csv")
+
+BlueJays_raw<- BlueJays_raw %>% filter(Year >= 1998)
+
+BlueJays_raw <- BlueJays_raw %>% mutate(Team = "TOR")
+```
+
+Baltimore Data:
+
+```{r}
+# Orioles Raw Data
+Orioles_raw <- read_csv("Orioles_raw.csv")
+
+Orioles_raw<- Orioles_raw %>% filter(Year >= 1998)
+
+Orioles_raw <- Orioles_raw %>% mutate(Team = "BAL")
+```
+
+
+Tampa Bay Data:
+
+```{r}
+# Rays Raw Data
+Rays_raw <- read_csv("Rays_raw.csv")
+
+Rays_raw <- Rays_raw %>% mutate(Team = "TBD")
+
+```
+
+```{r}
+dim(Rays_raw) # only 26 observations
+```
+Notice that the Rays raw data does not need to be filtered because it was already filtered in baseball reference for after 1998.
+
+## Appending Rows From 5 data frames into 1 data frame
+
+
+To easily manipulate and analyze the data, I want to `row bind` all of the smaller data frames into a single larger data frame.
+
+```{r}
+AL_EAST <- rbind(RedSox_raw,Yankees_raw,BlueJays_raw,Orioles_raw,Rays_raw)
+```
+
+I want to create the outcome variable to make this a binary classification problem.
+
+```{r}
+AL_EAST <- AL_EAST %>% mutate(Finish = if_else(Finish == 1, 1,0)) # Making outcome variable binary
+```
+
+
+Since the year 2020 only had 60 games, I am taking it out of the data set because it will inaccurately depict the statistics it takes to win the AL East. Also, I will be removing the year 2023 because only ~9 games have been played this season.
+
+```{r}
+AL_EAST <- AL_EAST %>% filter(Year!= 2023)
+AL_EAST <- AL_EAST %>% filter(Year!= 2020)
+
+```
+
+Now that I have all of my seperate data frames in one larger data frame, I want to perform some quick data analysis to look at trends within the data.
+
+```{r}
+head(AL_EAST)
+
+```
+
+I want to rename some of the variables that have weird characters.
+
+```{r}
+
+AL_EAST <- rename(AL_EAST, RA_G = `RA/G`)
+
+AL_EAST <-rename(AL_EAST, Fld = `Fld%`)
+```
+I have 26 different columns. Here is a codebook for the different columns.
+
+  The outcome variable:
+  
+   - `Finish`: Place finished in league(1 if first; 0 otherwise)
+
+  The predictor variables:
+  
+   - `Year`: Year of baseball season
+   
+   - `Lg`: League(Always AL East)
+   
+   - `W`: Amount of Wins in that season
+   
+   - `L`: Amount of Loses in that season
+   
+   - `RA_G`: Runs Allowed Per Game
+   
+   - `ERA`: $9*(ER/IP)$
+   
+   - `G`: Games Played
+   
+   - `CG`: Complete Games
+   
+   - `tSho`: Team shutouts
+   
+   - `SV`: Saves
+   
+   - `IP`: Innings Pitched
+   
+   - `H`: Hits Against
+   
+   - `R`: Runs Against
+   
+   - `ER`: Earned Runs Against
+   
+   - `HR`: Home Runs Against
+   
+   - `BB`: Bases on Balls Against
+   
+   - `SO`: Strikeouts 
+   
+   - `WHIP`: $(BB + H)/IP$
+   
+   - `SO9`: $9 * (SO/IP)$
+   
+   - `HR9`: $9 * (HR/IP)$
+   
+   - `E`: Errors Committed 
+   
+   - `DP`: Double Plays
+   
+   - `Fld`: Fielding Percentage
+   
+   - `PAge`: Pitchers Average Age
+   
+## Data Analysis
+
+In this section I will look at how the different predictor variables interact with eachother. Since I scraped and cleaned this data set myself, there is no NA values.
+
+```{r}
+sum(is.na(AL_EAST) == TRUE) # 0 NA Values; just to make sure
+```
+
+
+I am intrigued by the variable `PAge`. So, I want to see how it compares within and across the AL East.
+
+```{r}
+AL_EAST %>% summarise(avg_PAge = mean(PAge)) #29.1
+
+AL_EAST %>% group_by(Team) %>% summarise(avg_PAge = mean(PAge)) %>% 
+  arrange(avg_PAge)
+
+```
+
+The average pitchers age over all years is 29.1. Interestingly, only BOS and NYY have average pitching ages over that threshold.
+
+I wonder if there is a positive correlation between average starting pitchers age and winning the AL East? 
+
+This is a type of question that will be answered thoroughly with regression modeling later.
+
+I want to look at innings pitched for each team. This will tell me what teams tend to go into overtime more often than others.
+
+```{r}
+AL_EAST %>% summarise(avg_IP = mean(IP)) #1443
+
+AL_EAST %>% group_by(Team) %>% summarise(avg_IP = mean(IP)) %>% 
+  arrange(avg_IP)
+
+```
+
+It looks like Boston and NYY go into overtime more than the other 3 teams in the AL East.
+
+I also want to look at how the different teams compare based on their WHIP. WHIP is a common baseball stastistics to measure the performance of pitchers.
+
+```{r}
+AL_EAST %>% summarise(avg_WHIP = mean(WHIP)) #1.35
+
+AL_EAST %>% group_by(Team) %>% summarise(avg_WHIP = mean(WHIP)) %>% 
+  arrange(avg_WHIP)
+
+ggplot(aes(x = Team, y = WHIP/26),data = AL_EAST)+
+       geom_col() + ylab(" Average WHIP since 1998") + scale_y_continuous(limits = c(0,1.5))
+```
+
+The average WHIP in the AL East is 1.35, and not suprisingly the Yankees and Red Sox have the lowest average WHIP among pitching staffs.
+
+I also want to look at a boxplot grouped by team that shows the pitching staff average age over the years.
+
+```{r}
+ggplot(aes(x = Team, y = PAge),data = AL_EAST)+
+       geom_boxplot() + ylab("Average Age of Pitching Staff") + scale_y_continuous(limits = c(25,35))
+```       
+
+From this boxplot, I can tell that the NYY has the largest range of ages over the years and also has the largest median age.
+
+The lowest year of pitching staff age belongs to the Rays and the smallest range of ages over the years belongs to Baltimore.
+
+Continuing with the data analysis, I want to look at the outcome variable `Finish`.
+
+```{r}
+ggplot(aes(x = Team, y = Finish),data = AL_EAST)+
+       geom_col() + ylab("# of Times Finishing 1st since 1998")
+
+AL_EAST %>% count(Finish,Team) %>% filter(Finish == 1)
+
+```
+
+It looks like the Yankees have dominated the AL East in the past 25 years with over half of the 1st place finishes in the regular season.
+
+I want to look at the correlation between different predictor variables.
+
+```{r, warning = FALSE}
+AL_EAST %>% 
+  dplyr::select(is.numeric) %>% 
+  cor() %>% 
+  corrplot(type = "lower", diag = FALSE, method = "pie") 
+```
+
+
+Interesting findings from correlation plot between of the numeric predictor variables:
+
+  - Looking at how all of the different numeric variables compare with the variable `Year`, I noticed that there is a general negative trend between time and most of the statistics
+  
+  - Over time, there is a decline in `complete games` but an increase in `strikeouts per 9 innings`
+  
+  - `Average pitching age` has no strong correlation with any other variable
+  
+  - Higher `Runs Allowed per game` is extremely correlated with a higher ERA.
+  
+  - `Fielding Percentage` has an extremely strong negative correlation with `Errors`. This means they are opposites.(Makes sense)
+  
+## Model Building
+
+Now that I have done a dive into the data between predictor variables, I want to do a more extensive comparison the data to the outcome variable, `Finish`. I want to find the best predictive variables for finishing first in the AL East. To do this, I will use a logistic regression model. This is used when I am working with a discrete outcome variable.
+
+For the model, I can remove:
+  
+  - LG -> all teams are in the same divison
+  
+  - G -> practically every season was 162 games
+  
+  - Year -> only one team can win the league every year
+  
+  - W and L -> Higher win count will lead to higher chances at finishing first and vice versa for higher L count and not finishing first
+  
+```{r}
+
+AL_EAST$Team <- factor(AL_EAST$Team)
+
+log_reg <- glm(Finish~ RA_G+ERA+CG+tSho+SV+ IP+H+R+ER+HR+BB+SO+WHIP+SO9+HR9+E+DP+Fld+PAge+Team, data = AL_EAST) # logistic regression model
+
+```
+
+
+```{r}
+summary(log_reg)
+```
+
+
+It looks like there is collinearity between multiple predictor variables. This means that I want to reduce the number of predictor variables and find the best fitting model for the data set. To do that I will use stepAIC and lasso regression. I am using lasso regression instead of ridge regression because I want to completely remove the variables that aren't influential and are the cause of multicollinearity.
+
+### Step_AIC
+```{r,include = FALSE}
+MASS::stepAIC(log_reg, direction = "backward")
+```
+
+The best logistic regression model from the step AIC function was:
+
+```{r}
+best_log_AIC <- glm(Finish ~CG+SV+H+R+BB+SO+WHIP+SO9+HR9+E+Fld+PAge, data = AL_EAST)
+
+```
+
+```{r}
+summary(best_log_AIC)
+
+```
+
+The significant variables are all of those that have a p value less than 0.05. If the estimate for the coefficient is negative, then there is a negative correlation between that predictor variable and finishing first in the AL East.
+
+For example, an increase in `BB` or Balls by the pitching staff means a decrease in finish placing since the estimate is negative.
+
+### Lasso Regression
+
+```{r}
+pred_var <- data.matrix(AL_EAST[, c('RA_G', 'ERA','CG','tSho','SV','IP','H','R','ER', 'HR','BB','SO','WHIP','SO9','HR9','E','DP','Fld','PAge','Team')])
+```
+
+This vector makes it easy to use the cv.glmnet function. Important to note about the cv.glmnet function is it uses a baseline of k=10 k-folds cross validation.
+
+```{r}
+lasso_mod <- cv.glmnet(pred_var, AL_EAST$Finish,alpha = 1)
+
+best_lambda <- lasso_mod$lambda.min
+
+best_lambda
+```
+
+```{r}
+best_lasso <- glmnet(pred_var, AL_EAST$Finish,alpha = 1, lambda = best_lambda)
+
+coef(best_lasso)
+
+```
+
+According to lasso regression, any of the variables without a value next to their name got dropped because they were not significant to the model.
+
+```{r}
+lasso_final_log <- glm(Finish~ CG+tSho+SV+IP+H+R+HR+PAge,data = AL_EAST)
+
+summary(lasso_final_log)
+```
+
+
+
+## Conclusion
+
+According to variable selection used on the logistic regression model, it seems like there is one singular strong predictor for `Finish` outcome.
+
+
+`Pitcher age` is a very strong predictor when it comes to finishing first in the AL East. A reason for this could be because of the high pressure and high stake games in the AL East(playing at Fenway and Yankees Stadium). More mature and experienced pitchers are better at handling the pressure and gaining crucial wins to win the division.
+
+According to Step_AIC, some other solid predictor variables for predicting a first place finish in the AL East are HR9 and SO9. Interestingly, an increase in home runs given up per 9 innings lead to a decrease in finishing placement. On the other hand, an increase in Strike outs per 9 innings lead to an increase in finishing placement. 
+
+## Next Steps
+
+A next step for this project is to add in data from the 5 other divisions in baseball. Once I have all of the pitching data from all the teams, I can do division comparisons and find trends within the AL East compared to other divisons in the league. 
+
+In addition, the introduction of 5 times as much data would allow me to do training splits and possible build a predictive model about winning a division across the entirety of the MLB.
+
+Another route to go would be to add the batting data on the baseball reference website. I think that this route would be a hassle and not the route to go because there would be too many predictor variables compared to observations. 
